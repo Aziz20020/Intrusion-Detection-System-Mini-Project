@@ -1,0 +1,38 @@
+from scapy.all import sniff, IP, TCP, UDP, conf
+import datetime
+
+# ✅ Explicitly create a Layer 3 socket
+l3socket = conf.L3socket()
+
+def analyze(packet):
+    if IP not in packet:
+        return
+
+    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    src = packet[IP].src
+    dst = packet[IP].dst
+    ttl = packet[IP].ttl
+
+    if TCP in packet:
+        sport = packet[TCP].sport
+        dport = packet[TCP].dport
+        flags = packet[TCP].flags
+        proto = "TCP"
+    elif UDP in packet:
+        sport = packet[UDP].sport
+        dport = packet[UDP].dport
+        flags = "-"
+        proto = "UDP"
+    else:
+        sport = dport = flags = "-"
+        proto = "OTHER"
+
+    print(f"[{ts}] {src}:{sport} -> {dst}:{dport} | {proto} | TTL={ttl} | FLAGS={flags}")
+
+print("Monitoring traffic (Layer 3, Windows-safe)... Ctrl+C to stop")
+
+sniff(
+    opened_socket=l3socket,   # 🔥 THIS IS THE KEY
+    prn=analyze,
+    store=0
+)
