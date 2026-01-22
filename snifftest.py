@@ -3,12 +3,20 @@ from collections import defaultdict, deque
 from scapy.all import sniff, IP, TCP, UDP
 
 PORT_LIMIT = 10
-PACKET_LIMIT = 10
-TIME_LIMIT = 10
+PACKET_LIMIT = 23
+TIME_LIMIT = 2
 MY_IP = "192.168.0.2"
 COMMON_PORTS = {80, 443, 53, 123, 1900, 22, 21, 445, 3389}
 COOLDOWN_TIME = 4
 BUFFER_CLEAN_TIME = 12
+
+SYN= 'S'
+ACK= 'A'
+FIN = 'F'
+RST = 'R'
+PSH = 'P'
+
+
 
 
 last_port_alert = defaultdict(float)
@@ -60,10 +68,10 @@ def report(ip,common,port):
             last_packet_alert[ip]=now
                 
                 
-        if now - last_unusual_port_alert[ip] > COOLDOWN_TIME:        
-            if(common == False):
-                print(f"ALERT: Unusual port {port} from IP: {ip} ")
-            last_unusual_port_alert[ip] = now
+       # if now - last_unusual_port_alert[ip] > COOLDOWN_TIME:        
+        if(common == False):
+              print(f"ALERT: Unusual port {port} from IP: {ip} ")
+            #last_unusual_port_alert[ip] = now
         
         
         
@@ -71,14 +79,18 @@ def report(ip,common,port):
 
 
 def analyze(packet):
+    
     if not packet.haslayer(IP):
         return
 
+    
+    
     ip_layer = packet.getlayer(IP)
     src_ip = ip_layer.src
     dst_ip = ip_layer.dst
-
-    if src_ip == MY_IP:
+#src_ip !=  "192.168.137.192"
+#dst_ip != MY_IP
+    if src_ip == MY_IP or dst_ip != MY_IP:
         return
     tcp_layer = packet.getlayer(TCP)
     udp_layer = packet.getlayer(UDP)
@@ -88,8 +100,11 @@ def analyze(packet):
     common = False
     if tcp_layer is not None or udp_layer is not None:
         if tcp_layer is not None:
+            if not (SYN in tcp_layer.flags and ACK not in tcp_layer.flags) :# SYN only
+             return
             protocol = "TCP"  
             port = tcp_layer.dport
+           
         else:
             protocol = "UDP"
             port = udp_layer.dport
@@ -97,8 +112,9 @@ def analyze(packet):
         now = time.time()
         connections[src_ip].append((now,port))
         for elm in COMMON_PORTS:
-            if elm == port:
+            if port > 1024 or elm == port:
                 common = True
+                break
     
     
         # ---- Time window tracking ----
@@ -115,7 +131,7 @@ def analyze(packet):
 print("Monitoring traffic...")
 sniff(
     iface='\\Device\\NPF_{55F65FBC-B063-4B21-9C0E-9173F3EDA695}',
-    timeout=10,
+    timeout=100,
     prn=analyze
 )
 
