@@ -208,7 +208,7 @@ def analyze(packet):
             
             #if (is_service_port and is_uncommon):
                 # print(f"ALERT: Unusual port {port} from IP: {src_ip} ")
-        else:
+        elif(SYN in flags and ACK not in flags):
             ssh_attempts[src_ip].append(time.time())
             
 
