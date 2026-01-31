@@ -3,15 +3,15 @@ from collections import defaultdict, deque
 from scapy.all import sniff, IP, TCP, UDP, ICMP
 from datetime import datetime
 
-PORT_LIMIT = 20
-PING_LIMIT = 20
+PORT_LIMIT = 10
+PING_LIMIT = 10
 PING_TIME_THRESHOLD = 10 
-PACKET_LIMIT = 200
-TIME_LIMIT = 1
-MY_IP = "192.168.0.4"
+PACKET_LIMIT = 50
+TIME_LIMIT = 10
+MY_IP = "192.168.0.6"
 COMMON_PORTS = {80, 443, 53, 123, 1900, 22, 21, 445, 3389}
 COOLDOWN_TIME = 4
-BUFFER_CLEAN_TIME = 12
+BUFFER_CLEAN_TIME = 30
 
 
 
@@ -95,30 +95,30 @@ def clean(ip):
         
 
 
-def report(ip,port):
+def report(ip,port,attempts):
         now = time.time()
     
         if now - last_port_alert[ip]> COOLDOWN_TIME:
             # ---- Port scanning detection ----
             port_count = len({p for t,p in connections[ip]}) #(timestamp,port)
             if port_count > PORT_LIMIT:
-             print(f"{datetime.now()} ALERT: Possible port scanning from IP: {ip} ({port_count} ports)")
-            last_port_alert[ip] = now
+                print(f"{datetime.now()} ALERT: Possible port scanning from IP: {ip} ({port_count} ports)")
+                last_port_alert[ip] = now
             
             
         if now - last_tcp_alert[ip] > COOLDOWN_TIME:
             # ---- Packet rate detection ----
             packet_count = len([flag for _ , _, flag in tcp_flags[ip]
-                               if flag == SYN])
+                               if flag == {SYN}])
             if packet_count > PACKET_LIMIT:
                 print(f"ALERT: High packet rate from IP: {ip} ({packet_count} packets in {TIME_LIMIT}s POSSIBLE TCP SCAN!)") #FIXE THIS<<<<<<<<<<<<<<<<<<<<<<<<<<<
-            last_tcp_alert[ip]=now
+                last_tcp_alert[ip]=now
             
         if now - last_icmp_alert[ip] > COOLDOWN_TIME:
             port_count = len(set(dist_ip for _ , dist_ip in icmp_pings[ip]))
             if port_count > PING_LIMIT:
                 print(f"ALERT: Too many pings from IP: {ip} ({port_count} pings in {PING_LIMIT}s POSSIBLE ICMP SCAN!)")
-            last_icmp_alert[ip]=now
+                last_icmp_alert[ip]=now
                 
             
         if now - last_udp_alert[ip] > COOLDOWN_TIME:
@@ -126,13 +126,13 @@ def report(ip,port):
             packet_count = len(set(p for _,p in udp_packet[ip]))
             if packet_count > PACKET_LIMIT:
                 print(f"ALERT: High packet rate from IP: {ip} ({packet_count} packets in {TIME_LIMIT}s POSSIBLE UDP SCAN!)")#AND THIS<<<<<<<<<<<<<<<<<<<<<<<<<<
-            last_udp_alert[ip]=now
+                last_udp_alert[ip]=now
             
         if now - last_ssh_brute_alert[ip] > COOLDOWN_TIME:
             count = len(ssh_attempts[ip])
             if count > SSH_BRUTE_MAX_ATTEMPTS:
-                 print(f"ALERT: Too Many Attempts from IP: {ip} ({count} packet to port 22 in the range of {SSH_BRUTE_WINDOW }s POSSIBLE UDP SCAN!)")
-            last_ssh_brute_alert[ip]=now
+                print(f"ALERT: Too Many Attempts from IP: {ip}: ({attempts} in {SSH_BRUTE_WINDOW }s POSSIBLE SSH BRUTE FORCE ATTACK!)")
+                last_ssh_brute_alert[ip]=now
                 
                 
        # if now - last_unusualip_[2]rt_alert[ip] > COOLDOWN_TIME:        
@@ -174,8 +174,8 @@ def analyze(packet):
     icmp_layer = packet.getlayer(ICMP)
     
     if src_ip == MY_IP or dst_ip != MY_IP:
-        if(dst_ip=='192.168.0.4'):
-         print(f"  --------> FILTERED (src={src_ip}, dst={dst_ip}, MY_IP={MY_IP} )")
+        #if(dst_ip=='192.168.0.4'):
+         #print(f"  --------> FILTERED (src={src_ip}, dst={dst_ip}, MY_IP={MY_IP} )")
         return
     
     protocol = "OTHER"
@@ -227,8 +227,10 @@ def analyze(packet):
         if icmp_layer.type == 8:  # Echo Request (ping)
             icmp_pings[src_ip].append((now,dst_ip))
         
-    
-    connections[src_ip].append((now,port))
+    if port != SSH_PORT:
+        connections[src_ip].append((now,port))
+    else:
+        print(f"Attempts: {len(ssh_attempts[src_ip])}")
 
   
 
@@ -246,11 +248,11 @@ def analyze(packet):
     
     print(f"{src_ip} --> {dst_ip} | {protocol} | Port: {port}")
 
-    report(src_ip,port)
+    report(src_ip,port,len(ssh_attempts[src_ip]))
 
 
 print("Monitoring traffic...")
-sniff(iface='\\Device\\NPF_{55F65FBC-B063-4B21-9C0E-9173F3EDA695}',
+sniff(iface='enp0s8',
     timeout=100,
     promisc=True,
     prn=analyze
