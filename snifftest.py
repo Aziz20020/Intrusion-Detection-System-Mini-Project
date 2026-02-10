@@ -1,69 +1,158 @@
 import time
 from collections import defaultdict, deque
-from scapy.all import sniff, IP, TCP, UDP
+from scapy.all import sniff, IP, TCP, UDP, ICMP
+from datetime import datetime
 
 PORT_LIMIT = 10
-PACKET_LIMIT = 10
+PING_LIMIT = 10
+PING_TIME_THRESHOLD = 10 
+PACKET_LIMIT = 50
 TIME_LIMIT = 10
-MY_IP = "192.168.0.2"
+MY_IP = "10.42.0.1" #Your ip here
+
 COMMON_PORTS = {80, 443, 53, 123, 1900, 22, 21, 445, 3389}
 COOLDOWN_TIME = 4
-BUFFER_CLEAN_TIME = 12
+BUFFER_CLEAN_TIME = 30
+
+
+
+SSH_PORT = 22
+SSH_BRUTE_MAX_ATTEMPTS = 5  # Failed attempts before alert
+SSH_BRUTE_WINDOW = 60    # brute force time window
+
+
+
+SYN= 'S'
+ACK= 'A'
+FIN = 'F'
+RST = 'R'
+PSH = 'P'
+URG = 'U'
+
+
 
 
 last_port_alert = defaultdict(float)
-last_packet_alert = defaultdict(float)
+last_tcp_alert = defaultdict(float)
+last_icmp_alert = defaultdict(float)
+last_udp_alert = defaultdict(float)
+last_xmas_alert = defaultdict(float)
+
+last_ssh_brute_alert = defaultdict(float)
 last_unusual_port_alert = defaultdict(float) #float to start by default 0.0, we use this dectionnairy to store last time an ip sent a report therefore stop spaming and flooding the terminal
 last_buffer_cleaned_time = time.time()
 
-connections = defaultdict(deque)          # ip -> deque(timestamps,ports)
-ip_timestamps = defaultdict(deque)      # ip -> deque(timestamps)
+connections = defaultdict(deque)          # ip -> deque(timestamp,ports)
+
+tcp_flags = defaultdict(deque)          # ip -> deque(timestamp,port,flag)
+udp_packet = defaultdict(deque)         # ip -> deque(timestamp,port)
+icmp_pings = defaultdict(deque)        # ip ->deque(timestamp,ip_pinged)
+ssh_attempts = defaultdict(deque)      # ip ->deque(timestamp)
 
 
+
+def get_flags(tcp_layer):
+    flags = set()
+    if SYN in tcp_layer.flags: flags.add(SYN)   
+    if RST in tcp_layer.flags: flags.add(RST)        
+    if ACK in tcp_layer.flags: flags.add(ACK)   
+    if FIN in tcp_layer.flags: flags.add(FIN)       
+    if PSH  in tcp_layer.flags: flags.add(PSH)
+    return flags   
 def clean(ip):
     """Remove timestamps older than TIME_LIMIT seconds"""
     now = time.time()
-    q = ip_timestamps[ip]
+  
     p = connections[ip]
+    r = tcp_flags[ip]
+    d = udp_packet[ip]
+    g = icmp_pings[ip]
         
 
 
 
-    while q and q[0] < now - TIME_LIMIT:
-        q.popleft()
+
     
     while p and p[0][0] < now - BUFFER_CLEAN_TIME:
         p.popleft()
+    
+    while r and r[0][0] < now - TIME_LIMIT:
+        r.popleft()
         
+        
+    while d and d[0][0] < now - TIME_LIMIT:
+        d.popleft()
+    
+    while g and g[0][0] < now - TIME_LIMIT:
+        g.popleft()
+        
+    while ssh_attempts[ip] and ssh_attempts[ip][0] < now - SSH_BRUTE_WINDOW:
+        ssh_attempts[ip].popleft()
     
         
         
         
 
 
-def report(ip,common,port):
+def report(ip,port,attempts):
         now = time.time()
     
         if now - last_port_alert[ip]> COOLDOWN_TIME:
             # ---- Port scanning detection ----
             port_count = len({p for t,p in connections[ip]}) #(timestamp,port)
             if port_count > PORT_LIMIT:
-             print(f" ALERT: Possible port scanning from IP: {ip} ({port_count} ports)")
-            last_port_alert[ip] = now
+                print(f"{datetime.now()} ALERT: Possible port scanning from IP: {ip} ({port_count} ports)")
+                last_port_alert[ip] = now
+                while connections[ip]:
+                    connections[ip].popleft()
             
             
-        if now - last_packet_alert[ip] > COOLDOWN_TIME:
+        if now - last_tcp_alert[ip] > COOLDOWN_TIME:
             # ---- Packet rate detection ----
-            packet_count = len(ip_timestamps[ip])
+            packet_count = len([flag for _ , _, flag in tcp_flags[ip]
+                               if flag == {SYN}])
             if packet_count > PACKET_LIMIT:
-                print(f"ALERT: High packet rate from IP: {ip} ({packet_count} packets in {TIME_LIMIT}s)")
-            last_packet_alert[ip]=now
+                print(f"ALERT: High packet rate from IP: {ip} ({packet_count} packets in {TIME_LIMIT}s POSSIBLE TCP SCAN!)") 
+                last_tcp_alert[ip]=now
+                while tcp_flags[ip]:
+                    tcp_flags[ip].popleft()
+            
+        if now - last_icmp_alert[ip] > COOLDOWN_TIME:
+            port_count = len(set(dist_ip for _ , dist_ip in icmp_pings[ip]))
+            if port_count > PING_LIMIT:
+                print(f"ALERT: Too many pings from IP: {ip} ({port_count} pings in {PING_LIMIT}s POSSIBLE ICMP SCAN!)")
+                last_icmp_alert[ip]=now
+                while icmp_pings[ip]:
+                    icmp_pings[ip].popleft()
+                
+            
+        if now - last_udp_alert[ip] > COOLDOWN_TIME:
+            # ---- UDP Port Scan detection ----
+            packet_count = len(set(p for _, p in udp_packet[ip]))
+            if packet_count > PACKET_LIMIT:
+                print(f"ALERT: High UDP packet rate from IP: {ip} ({packet_count} unique UDP ports POSSIBLE UDP SCAN!)")
+                last_udp_alert[ip] = now  
+            
+        if now - last_ssh_brute_alert[ip] > COOLDOWN_TIME:
+            count = len(ssh_attempts[ip])
+            if count > SSH_BRUTE_MAX_ATTEMPTS:
+                print(f"ALERT: Too Many Attempts from IP: {ip}: ({attempts} in {SSH_BRUTE_WINDOW }s POSSIBLE SSH BRUTE FORCE ATTACK!)")
+                last_ssh_brute_alert[ip]=now
                 
                 
-        if now - last_unusual_port_alert[ip] > COOLDOWN_TIME:        
-            if(common == False):
-                print(f"ALERT: Unusual port {port} from IP: {ip} ")
-            last_unusual_port_alert[ip] = now
+       # if now - last_unusualip_[2]rt_alert[ip] > COOLDOWN_TIME:        
+        
+            #last_unusual_port_alert[ip] = now
+            
+        if tcp_flags[ip] and SYN in tcp_flags[ip][-1][2] and RST in tcp_flags[ip][-1][2] and not ACK in tcp_flags[ip][-1][2]:#-1 for latest packet we dont wanna check old already checked packet
+         print(f'Alert Possible SYN scan(SYN with RST and no ACK) from ip: {ip}!!')
+         
+
+            
+            
+        
+            
+        
         
         
         
@@ -71,53 +160,112 @@ def report(ip,common,port):
 
 
 def analyze(packet):
+
+    
     if not packet.haslayer(IP):
         return
 
+    
+    
     ip_layer = packet.getlayer(IP)
     src_ip = ip_layer.src
     dst_ip = ip_layer.dst
+    
 
-    if src_ip == MY_IP:
-        return
+    #src_ip !=  "192.168.137.192"
+    #dst_ip != MY_IP
+    
     tcp_layer = packet.getlayer(TCP)
     udp_layer = packet.getlayer(UDP)
+    icmp_layer = packet.getlayer(ICMP)
+    
+    if src_ip == MY_IP:
+      
+        #print(f"  --------> FILTERED (src={src_ip}, dst={dst_ip}, MY_IP={MY_IP} )")
+        return
     
     protocol = "OTHER"
     port = None
-    common = False
-    if tcp_layer is not None or udp_layer is not None:
-        if tcp_layer is not None:
-            protocol = "TCP"  
-            port = tcp_layer.dport
-        else:
-            protocol = "UDP"
-            port = udp_layer.dport
+    now = time.time()
+
+   
+    if tcp_layer:
+        flags = get_flags(tcp_layer)
+       # if(src_ip == '192.168.0.4'):
+       # print(f"DEBUG FLAGS from {src_ip} -> {dst_ip}: {flags}")
+        protocol = "TCP"  
+        port = tcp_layer.dport
         
-        now = time.time()
+        if(port != SSH_PORT):
+        
+            is_service_port = port <= 1024
+            is_uncommon = port not in COMMON_PORTS
+            tcp_flags[src_ip].append((now,port,flags))
+            if last_xmas_alert[src_ip] - now > COOLDOWN_TIME:
+                if( (FIN in flags) and (PSH in flags ) and (URG in flags) ) or( (FIN in flags) and ((PSH in flags ) or (URG in flags))) :
+                    print(f'Alert Possible XMAS scan!! from ip: {src_ip}')
+                    last_xmas_alert[src_ip] = now
+            
+            if (flags=={FIN}):
+                print(f'Alert Possible FIN scan!! from ip: {src_ip}')
+        
+            if(not flags):
+                print(f'Alert Possible NULL scan (NO FLAGS WITH A TCP PACKET)!! from ip: {src_ip}')
+            
+            #if (is_service_port and is_uncommon):
+                # print(f"ALERT: Unusual port {port} from IP: {src_ip} ")
+        elif(SYN in flags and ACK not in flags):
+            ssh_attempts[src_ip].append(time.time())
+            
+
+        
+        
+    if udp_layer:
+        protocol = "UDP"
+        port = udp_layer.dport
+        is_service_port = port <= 1024
+        is_uncommon = port not in COMMON_PORTS
+        udp_packet[src_ip].append((now,port))
+        if (is_service_port and is_uncommon):
+              print(f"{datetime.now()} ALERT: Unusual port {port} from IP: {src_ip} ")
+        
+    if icmp_layer:
+        if icmp_layer.type == 8:  # Echo Request (ping)
+            icmp_pings[src_ip].append((now,dst_ip))
+        
+    if port != SSH_PORT:
         connections[src_ip].append((now,port))
-        for elm in COMMON_PORTS:
-            if elm == port:
-                common = True
-    
-    
-        # ---- Time window tracking ----
+    elif(SYN in flags and ACK not in flags):
+        ssh_attempts[src_ip].append(time.time())
+        print(f"DEBUG: New SSH SYN from {src_ip}, total attempts: {len(ssh_attempts[src_ip])}")
   
-        ip_timestamps[src_ip].append(now)
 
-        clean(src_ip)
+     #---------------------------------------------------------------------------------------------------------------->>>>>>> bs.zaouche@gmail.com 
 
+
+
+    # ---- Time window tracking ----
+
+   
+    #clean(src_ip)
+   # if(src_ip == '192.168.0.4'):
         #print(f"{src_ip} --> {dst_ip} | {protocol} | Port: {port}")
+    #print(f"DEBUG FLAGS from {src_ip} -> {flags}")
+    
+    print(f"{src_ip} --> {dst_ip} | {protocol} | Port: {port}")
 
-        report(src_ip,common,port)
+    report(src_ip,port,len(ssh_attempts[src_ip]))
 
 
 print("Monitoring traffic...")
-sniff(
-    iface='\\Device\\NPF_{55F65FBC-B063-4B21-9C0E-9173F3EDA695}',
-    timeout=10,
+sniff(iface='wlp0s20f3',
+    timeout=100,
+    promisc=True,
     prn=analyze
 )
+#iface='\\Device\\NPF_{55F65FBC-B063-4B21-9C0E-9173F3EDA695}'
 
 #print("\nConnections:", dict(connections))
-print("Packet timestamps:", {ip: len(q) for ip, q in ip_timestamps.items()})
+#print("Packet timestamps:", {ip: len(q) for ip, q in tcp_flags.items()})
+#print("Packet timestamps:", {ip: len(q) for ip, q in udp_packet.items()})
+
