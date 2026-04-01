@@ -3,8 +3,10 @@ import re
 import threading
 import queue
 import logging
+import tkinter as tk
 from collections import defaultdict, deque, Counter
 from scapy.all import sniff, IP, TCP, UDP, ICMP, Ether, ARP 
+from tkinter import ttk 
 
 # ---- Constants ----
 PORT_LIMIT          = 10
@@ -15,7 +17,7 @@ TIME_WINDOW         = 60
 MAX_ATTEMPTS        = 20
 SYN_FLOOD_TRIGGER   = 100
 HOST_LIMIT          = 10
-MY_IP               = "192.168.0.6"
+MY_IP               = "192.168.165.84"
 COMMON_PORTS        = {80, 443, 53, 123, 1900, 22, 21, 445, 3389}
 COOLDOWN_TIME       = 4
 EXPIRE_TIME         = 120
@@ -24,8 +26,8 @@ SSH_PORT            = 22
 SSH_BRUTE_MAX_ATTEMPTS = 5
 SSH_BRUTE_WINDOW    = 60
 
-GATEWAY_IP          = "192.168.0.1"
-MY_MAC              = "c8:8a:9a:8e:8a:0a"
+GATEWAY_IP          = "192.168.165.255"
+MY_MAC              = "c8:8a:9a:95:0e:c5"
 MAC_FLOOD_LIMIT     = 300
 ARP_SCAN_THRESHOLD  = 10
 ARP_FLOOD_THRESHOLD = 20
@@ -41,6 +43,7 @@ PSH = 'P'
 URG = 'U'
 
 # ---- Queues ----
+print_que = queue.Queue()
 raw_packets    = queue.Queue()
 parsed_packets = queue.Queue()
 alerts         = queue.Queue()
@@ -172,7 +175,9 @@ def parse():
         elif icmp_layer:
             protocol  = "ICMP"
             icmp_type = icmp_layer.type
+            port = icmp_type
 
+        print_que.put((src_ip,dst_ip,protocol,port))
         parsed_packets.put((now, port, src_ip, dst_ip, flags, icmp_type, protocol))
 
 
@@ -453,7 +458,19 @@ def clean_expired_entries():
 def report_to_terminal():
     while True:
         alert = alerts.get()
-        logging.warning(alert)
+        window.after(0,lambda v = alert :warning_list.insert(0,v))
+        
+
+
+def write():
+    while True:
+        pk = print_que.get()
+        packet_recived.insert("",0,values=(pk[0],pk[1],pk[2],pk[3]))    
+
+
+def sniffer():
+    print("Monitoring traffic...")
+    sniff(iface='wlp0s20f3', promisc=True, prn=capture,store=False)
 
 
 # ----------------------------------------------------------------
@@ -465,15 +482,56 @@ analysis_thread            = threading.Thread(target=analysis,daemon=True)
 auth_log_thread            = threading.Thread(target=read_auth_log_file,daemon=True)
 clean_thread               = threading.Thread(target=clean_expired_entries,daemon=True)
 report_thread              = threading.Thread(target=report_to_terminal,daemon=True)
-l2_thread = threading.Thread(target=l2_analysis,daemon=True)
+l2_thread                  = threading.Thread(target=l2_analysis,daemon=True)
+print_thread               = threading.Thread(target=write,daemon=True)
+sniffer_thread             = threading.Thread(target=sniffer,daemon=True)
+
+window = tk.Tk()
+window.title("Ids")
+s = ttk.Style()
+
+s.theme_use("clam")
+s.configure("ip.Treeview",
+            background="grey",
+            relief="groove",
+            borderwidth=1
+            )
+s.configure("ip.Treeview.Heading",
+            relief="flat"
+            )
+
+warning_list = tk.Listbox(window,width=55)
 
 
+
+packet_recived = ttk.Treeview(window, columns=("src_Ip", "dst_Ip", "protocol", "port"), show="headings", height= 20,style="ip.Treeview")
+
+packet_recived.heading("src_Ip",text="src_Ip",)
+packet_recived.heading("dst_Ip",text="dst_Ip")
+packet_recived.heading("protocol",text="protocol")
+packet_recived.heading("port",text="port/Icmp type")
+
+packet_recived.column("src_Ip",width=120)
+packet_recived.column("dst_Ip",width=120)
+packet_recived.column("protocol",width=80)
+packet_recived.column("port",width=150)
+
+window.grid_rowconfigure(1,weight=1)
+window.grid_columnconfigure(0,weight=2)
+window.grid_columnconfigure(2,weight=1)
+
+packet_recived.grid(row=1,column=0,sticky="nsew")
+
+warning_list.grid(row=1,column=2,columnspan=2,sticky="nsew")
+
+print_thread.start()
 parse_thread.start()
 l2_thread.start()
 analysis_thread.start()
 auth_log_thread.start()
 clean_thread.start()
 report_thread.start()
+sniffer_thread.start()
 
-print("Monitoring traffic...")
-sniff(iface='wlp0s20f3', promisc=True, prn=capture,store=False)
+
+window.mainloop()
