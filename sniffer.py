@@ -21,10 +21,7 @@ print("Using interface:", dev)
 
 
 # ---- Constants ----
-PORT_LIMIT          = 10
-PING_LIMIT          = 10
-PACKET_LIMIT        = 50
-TIME_LIMIT          = 10
+
 TIME_WINDOW         = 60
 
 UDP_SCAN_TRIGGER    = 60
@@ -76,7 +73,6 @@ DNS_TYPES = {
 
 
 MY_IP               = "10.42.0.1"
-COMMON_PORTS        = {80, 443, 53, 123, 1900, 22, 21, 445, 3389}
 COOLDOWN_TIME       = 4
 EXPIRE_TIME         = 120
 BUFFER_CLEAN_TIME   = 30
@@ -95,8 +91,8 @@ ARP_SCAN_THRESHOLD  = 10
 ARP_FLOOD_THRESHOLD = 100
 ARP_FLOOD_WINDOW    = 1
 
-BASELINE_TIME       = 10 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-WINDOW              = 10
+BASELINE_TIME       = 60 #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
 
 # ---- Flags ----
 SYN = 'S'
